@@ -14,7 +14,6 @@ st.set_page_config(
 inject_css()
 render_sidebar_brand()
 
-# Header
 st.title("Fintech Transaction Analytics")
 st.markdown(
     "<div style='color: #64748b; font-size: 1.05rem; margin-top: -0.5rem;'>"
@@ -25,37 +24,35 @@ st.markdown(
 )
 st.divider()
 
-# Hero KPI — the headline number for the whole project
+# Pull KPI totals
+kpi = run_query("""
+    SELECT
+        (SELECT SUM(txn_count)    FROM deploy_fact_daily_metrics) AS total_txns,
+        (SELECT SUM(total_amount) FROM deploy_fact_daily_metrics) AS total_volume,
+        (SELECT SUM(fraud_count)  FROM deploy_fact_daily_metrics) AS total_fraud,
+        (SELECT SUM(customer_count) FROM deploy_tier_summary)     AS unique_customers;
+""").iloc[0]
+
+# Hero KPI
 render_hero_kpi(
     label="Total Transaction Volume Analyzed",
-    value="$1.14T",
+    value=f"${float(kpi['total_volume']) / 1e9:,.1f}B",
     context=(
-        "Across 6.36 million mobile money transactions over 31 days. "
+        f"Across {int(kpi['total_txns']):,} mobile money transactions over 31 days. "
         "Each subsequent page drills into a dimension of this data."
     ),
 )
 
 # Supporting KPIs
 st.subheader("Dataset at a Glance")
-
-kpi_query = """
-    SELECT
-        (SELECT SUM(txn_count)    FROM fact_daily_metrics) AS total_txns,
-        (SELECT SUM(total_amount) FROM fact_daily_metrics) AS total_volume,
-        (SELECT SUM(fraud_count)  FROM fact_daily_metrics) AS total_fraud,
-        (SELECT COUNT(*)          FROM dim_customers)       AS unique_customers;
-"""
-kpi = run_query(kpi_query).iloc[0]
-
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Transactions", f"{int(kpi['total_txns']):,}")
-col2.metric("Total Volume", f"${kpi['total_volume'] / 1e9:,.1f}B")
+col2.metric("Total Volume", f"${float(kpi['total_volume']) / 1e9:,.1f}B")
 col3.metric("Fraud Cases", f"{int(kpi['total_fraud']):,}")
 col4.metric("Unique Customers", f"{int(kpi['unique_customers']) / 1e6:,.2f}M")
 
 st.divider()
 
-# Navigation guide
 st.subheader("Explore the Dashboard")
 st.markdown(
     """

@@ -1,0 +1,4 @@
+risk_score,flagged_txns,true_fraud,precision_pct
+1,6409,6218,97.02
+2,2467610,1835,0.07
+3,22827,0,0.0

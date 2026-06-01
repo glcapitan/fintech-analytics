@@ -1,36 +1,52 @@
 """
-Database connection module for the Streamlit dashboard.
+Database connection helper.
 
-Provides cached connection and query functions that all dashboard pages import.
+Reads credentials from Streamlit secrets (works on Streamlit Cloud)
+with a fallback to local .env for development.
 """
 
 import os
-
-import pandas as pd
 import streamlit as st
+import pandas as pd
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
-# Load environment variables from .env in the project root.
-# We walk up from this file's location to find it reliably.
-from pathlib import Path
-env_path = Path(__file__).resolve().parents[2] / ".env"
-load_dotenv(dotenv_path=env_path)
+# Load .env for local development
+load_dotenv()
+
+
+def _get_credential(key: str, default: str = "") -> str:
+    """
+    Get a credential from Streamlit secrets first, then env vars.
+    This lets the same code work both locally and on Streamlit Cloud.
+    """
+    try:
+        # Streamlit Cloud and local .streamlit/secrets.toml
+        return st.secrets[key]
+    except (KeyError, FileNotFoundError, AttributeError):
+        # Local .env
+        return os.getenv(key, default)
 
 
 @st.cache_resource
 def get_engine():
-    """Create and cache the SQLAlchemy engine (runs once per session)."""
-    db_url = (
-        f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-        f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+    """Build and cache a SQLAlchemy engine for the project's database."""
+    db_host = _get_credential("DB_HOST", "localhost")
+    db_port = _get_credential("DB_PORT", "5432")
+    db_name = _get_credential("DB_NAME", "fintech_analytics")
+    db_user = _get_credential("DB_USER", "postgres")
+    db_password = _get_credential("DB_PASSWORD", "")
+
+    url = (
+        f"postgresql+psycopg2://{db_user}:{db_password}"
+        f"@{db_host}:{db_port}/{db_name}"
     )
-    return create_engine(db_url)
+    return create_engine(url, pool_pre_ping=True)
 
 
 @st.cache_data(ttl=600)
 def run_query(query: str) -> pd.DataFrame:
-    """Run a SQL query and return results as a pandas DataFrame (cached 10 min)."""
+    """Run a SQL query and return the results as a DataFrame."""
     engine = get_engine()
     with engine.connect() as conn:
         return pd.read_sql(text(query), conn)
