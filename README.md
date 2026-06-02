@@ -4,17 +4,38 @@
 
 A business intelligence dashboard analyzing 6.3M mobile money transactions, built around a specific mandate: **reduce fraud-investigation false positives without losing catch rate.** The headline finding — Rule-based Risk Score 1 achieves 97% precision while Score 2 generates 2.5M false positives — drives a concrete recommendation to drop the balance-mismatch signal from the scoring model.
 
+The value here is the **analytical framework** — how to structure and evaluate a fraud-scoring model against a precision/catch-rate tradeoff — which transfers directly to any labeled transaction stream.
+
+![Dashboard preview](docs/dashboard-preview.png)
+
+---
+
+## Key Findings
+
+| Finding | Value |
+|---|---|
+| Total transaction volume | $1,144.4B across 31 days |
+| Fraud rate | 0.129% overall |
+| Fraud concentration | 100% in TRANSFER (0.77%) and CASH_OUT (0.18%) |
+| Risk Score 1 precision | **97%** — 6,218 of 6,409 flags are real fraud |
+| Risk Score 2 false positives | **2.5M** — balance-mismatch signal fires indiscriminately |
+| Tier 1 volume concentration | Top 25% of customers control **83.8%** of total volume |
+
+**The core insight:** adding more risk signals does not improve precision — it *dilutes* the score when one signal is noisy. A single high-precision signal (Score 1) catches fraud cleanly; layering on a low-precision balance-mismatch signal buries 6,218 real fraud cases under 2.5M false positives. The recommendation is to drop or down-weight that signal rather than treating "more flags" as "better detection."
+
 ---
 
 ## Dataset
 
 **PaySim** — a synthetic mobile money transaction dataset simulating 31 days of activity across 6,362,620 transactions. Publicly available on Kaggle.
 
-> ⚠️ This is synthetic data. Anomalies (e.g., days 3–5 volume drops) are simulation artifacts, not real business events. All insights are framed accordingly.
+> ⚠️ This is synthetic data. Anomalies (e.g., days 3–5 volume drops) are simulation artifacts, not real business events, and the fraud labels are simulator-generated. The project demonstrates analytical methodology rather than real-world fraud discovery — every insight is framed accordingly.
 
 ---
 
 ## Architecture
+
+The pipeline uses a **deliberate dual-database design**: the full materialized views (9.4M rows) live in local PostgreSQL for development, while the dashboard queries pre-aggregated summary tables (~500 rows) on Neon. This was a conscious cost/performance decision — serving 9.4M rows from a free-tier cloud database would be slow and exceed storage limits, so all dashboard queries are pre-computed into compact `deploy_*` tables. The live app and the local pipeline run identical logic; only the query target differs.
 
 ```
 paysim.csv (6.3M rows)
@@ -47,19 +68,6 @@ src/dashboard/                    # Streamlit multi-page app
     ├── pages/3_Customer_Analysis.py
     └── pages/4_Fraud_Analytics.py
 ```
-
----
-
-## Key Findings
-
-| Finding | Value |
-|---|---|
-| Total transaction volume | $1,144.4B across 31 days |
-| Fraud rate | 0.129% overall |
-| Fraud concentration | 100% in TRANSFER (0.77%) and CASH_OUT (0.18%) |
-| Risk Score 1 precision | **97%** — 6,218 of 6,409 flags are real fraud |
-| Risk Score 2 false positives | **2.5M** — balance-mismatch signal fires indiscriminately |
-| Tier 1 volume concentration | Top 25% of customers control **83.8%** of total volume |
 
 ---
 
@@ -142,6 +150,8 @@ fintech-analytics/
 ├── sql/
 │   └── transformations/           # 4 materialized view definitions
 ├── cloud_data/                    # Pre-aggregated CSVs for cloud deploy
+├── docs/
+│   └── dashboard-preview.png      # Dashboard screenshot
 ├── export_for_cloud.py            # Generates deploy_ tables locally
 ├── load_to_neon.py                # Uploads deploy_ tables to Neon
 ├── run_transformations.py         # Rebuilds all materialized views
