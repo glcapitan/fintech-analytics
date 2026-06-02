@@ -1,239 +1,150 @@
-# Fintech Transaction Analytics Dashboard
+# Fintech Transaction Analytics
 
-> A business intelligence dashboard analyzing **6.36 million** mobile money transactions — surfacing fraud signals, customer segmentation insights, and transaction trends from a synthetic fintech dataset.
+**Live dashboard:** https://fintech-analytics-ajjjr7c7hzkzkutu9cefgu.streamlit.app
 
-**Built with:** PostgreSQL · Python (pandas, SQLAlchemy) · Streamlit · Plotly
-
----
-
-## 📊 Live Demo
-
-> *Deployment pending — see [Setup](#setup) below to run locally.*
-
-![Dashboard preview](docs/preview.png)
+A business intelligence dashboard analyzing 6.3M mobile money transactions, built around a specific mandate: **reduce fraud-investigation false positives without losing catch rate.** The headline finding — Rule-based Risk Score 1 achieves 97% precision while Score 2 generates 2.5M false positives — drives a concrete recommendation to drop the balance-mismatch signal from the scoring model.
 
 ---
 
-## 🎯 The Problem
+## Dataset
 
-A fintech processing millions of mobile money transactions per day needs leadership and ops teams to answer recurring questions without waiting on manual SQL pulls:
+**PaySim** — a synthetic mobile money transaction dataset simulating 31 days of activity across 6,362,620 transactions. Publicly available on Kaggle.
 
-- *Where is fraud actually happening, and at what rate?*
-- *Which customers concentrate the most volume — and the most risk?*
-- *Is daily transaction volume trending up or down, and how do we read past data anomalies?*
-
-This dashboard turns those questions into a self-service tool backed by a real data pipeline, eliminating the "ad-hoc SQL request → 4-hour Excel export → email back" cycle that bottlenecks analytics teams.
+> ⚠️ This is synthetic data. Anomalies (e.g., days 3–5 volume drops) are simulation artifacts, not real business events. All insights are framed accordingly.
 
 ---
 
-## 🔍 Key Findings
+## Architecture
 
-Each finding is surfaced directly on the relevant dashboard page with an insight box and chart annotation. Quick summary:
-
-### 1. Fraud lives in outbound flows only
-Across 6.36M transactions, fraud occurs **only in TRANSFER (0.77%) and CASH_OUT (0.18%)** — the transaction types that move money *out* of the system. Cash-ins, payments, and debits show **zero fraud across 3.6M+ records**. This matches the classic "transfer to mule account → cash out → disappear" pattern.
-
-> **Action:** Concentrate real-time fraud monitoring on TRANSFER and CASH_OUT events. Lower-frequency monitoring on other types.
-
-### 2. More signals ≠ better fraud detection
-Built a rule-based risk scoring layer (1–3 signals). Discovered that **Risk Score 1 catches fraud with 97% precision (6,218 of 6,409 flagged are real fraud)**, while Risk Scores 2 and 3 have **near-zero precision** because a balance-mismatch signal fires on most TRANSFER/CASH_OUT transactions regardless of fraud.
-
-> **Lesson:** Adding more signals can *dilute* detection if one signal is noisy. Validate each signal's standalone precision before combining.
-
-### 3. Customer volume follows extreme long-tail
-Tier 1 (top quartile) customers average **164× more transaction volume than Tier 4**. The customer base also includes **~570K receive-only customers (8%)** who never initiate a transaction — a segment that would be invisible if `dim_customers` only counted senders.
-
-> **Action:** Apply tier-aware risk thresholds for Tier 1. Investigate receive-only customers for activation opportunities.
-
-### 4. Data anomalies require smoothing, not hiding
-Daily transaction volume drops ~99% on days 3–5 (simulation gaps in the source dataset). Rather than dropping the rows, the dashboard uses **7-day rolling averages** so the time-series view stays trustworthy without false-alarming on data-quality issues.
-
-> **Lesson:** Don't hide data anomalies — surface them with appropriate smoothing and flag them separately for data-quality investigation.
-
----
-
-## 🏗️ Architecture
-┌──────────────────┐
-                            │  PaySim CSV      │
-                            │  (6.36M rows)    │
-                            └────────┬─────────┘
-                                     │
-                                     ▼
-                            ┌──────────────────┐
-                            │  Python ETL      │  pandas + SQLAlchemy
-                            │  (chunked load)  │  100k-row chunks, logging
-                            └────────┬─────────┘
-                                     │
-                                     ▼
-            ┌────────────────────────────────────────────┐
-            │  PostgreSQL                                │
-            │                                            │
-            │   raw_transactions  (bronze layer)         │
-            │           │                                │
-            │           ▼  (CTEs + window functions)     │
-            │   dim_customers                            │
-            │   fact_daily_metrics                       │
-            │   fact_customer_cohorts                    │
-            │   fact_fraud_signals     (gold layer)      │
-            └────────────────────┬───────────────────────┘
-                                 │
-                                 ▼
-                        ┌──────────────────┐
-                        │  Streamlit App   │  5 pages, Plotly charts
-                        │  (cached queries)│  insight boxes
-                        └──────────────────┘
-                        **Pattern**: Medallion architecture (bronze → gold). Raw data is ingested once, then transformations build pre-aggregated analytics tables (materialized views) that the dashboard queries directly. This means the dashboard reads ~150 rows per page load instead of scanning 6.36M raw rows — making the UI snappy.
+```
+paysim.csv (6.3M rows)
+    │
+    ▼
+src/etl/load_raw_data.py          # EXTRACT + LOAD
+    │  TRUNCATE before load (idempotent — prevents double-loads)
+    │  Chunked inserts (5,000 rows) — avoids PostgreSQL 65,535 param limit
+    ▼
+raw_transactions (PostgreSQL)
+    │
+    ▼
+sql/transformations/              # TRANSFORM
+    ├── 01_dim_customers.sql      # 6.9M customer dimension (NTILE tiers)
+    ├── 02_fact_daily_metrics.sql # 152-row daily aggregates + window functions
+    ├── 03_fact_customer_cohorts.sql
+    └── 04_fact_fraud_signals.sql # Rule-based risk scoring (signals 1–3)
+    │
+    ▼
+export_for_cloud.py               # Pre-aggregate for cloud deployment
+    │  9 deploy_ tables (~500 rows total)
+    ▼
+Neon PostgreSQL (cloud)           # Free-tier compatible (< 1MB)
+    │
+    ▼
+src/dashboard/                    # Streamlit multi-page app
+    ├── Home.py
+    ├── pages/1_Executive_Overview.py
+    ├── pages/2_Transaction_Trends.py
+    ├── pages/3_Customer_Analysis.py
+    └── pages/4_Fraud_Analytics.py
+```
 
 ---
 
-## 🧩 Tech Stack & Rationale
+## Key Findings
 
-| Layer | Tool | Why |
-|---|---|---|
-| Database | PostgreSQL 18 | Free, supports advanced SQL (CTEs, window functions, materialized views, stored procedures) |
-| ETL | Python + pandas + SQLAlchemy | Chunked CSV reads handle the 493 MB file without exhausting memory |
-| Secrets | python-dotenv | `.env` file kept out of Git via `.gitignore` |
-| Transformation | Raw SQL (in `sql/transformations/`) | Keeps logic close to the data; version-controlled |
-| Dashboard | Streamlit + Plotly | Fast Python-only iteration; interactive charts |
-| Caching | `@st.cache_data` / `@st.cache_resource` | Query results cached 10 min; engine instantiated once per session |
-| Version control | Git + GitHub | Clean commit history per day's work |
-
----
-
-## 🛠️ SQL Techniques Demonstrated
-
-This project uses every SQL pattern commonly asked in analyst interviews:
-
-- **CTEs** — multi-step transformation pipelines (e.g. `01_dim_customers.sql` chains 3 CTEs)
-- **Window functions** — `LAG()` for day-over-day, `AVG() OVER (ROWS BETWEEN n PRECEDING...)` for rolling averages, `SUM() OVER (... UNBOUNDED PRECEDING ...)` for cumulative totals, `NTILE(4)` for tier quartiles
-- **`PERCENTILE_CONT`** — statistically-derived thresholds in fraud signals (99th percentile by type)
-- **`COUNT(*) FILTER (WHERE ...)`** — conditional aggregation without verbose CASE statements
-- **Materialized views** — pre-aggregated tables for dashboard performance
-- **`UNION ALL`** with `MIN()/MAX()` — combining sender + receiver activity into a unified customer dimension
-- **`COALESCE` / `NULLIF`** — defensive NULL handling (especially for safe division)
-
-See [`sql/transformations/`](sql/transformations/) for the full transformation layer.
+| Finding | Value |
+|---|---|
+| Total transaction volume | $1,144.4B across 31 days |
+| Fraud rate | 0.129% overall |
+| Fraud concentration | 100% in TRANSFER (0.77%) and CASH_OUT (0.18%) |
+| Risk Score 1 precision | **97%** — 6,218 of 6,409 flags are real fraud |
+| Risk Score 2 false positives | **2.5M** — balance-mismatch signal fires indiscriminately |
+| Tier 1 volume concentration | Top 25% of customers control **83.8%** of total volume |
 
 ---
 
-## 📂 Project Structure
+## Engineering Notes
+
+**Bug: 2× data duplication**
+The ETL used `if_exists="append"` with no guard, so re-running it doubled the raw table (12.7M rows instead of 6.36M). Every downstream KPI was doubled — Executive Overview showed 12.7M transactions while the Home page showed 6.36M, creating an inconsistent story across pages. Fixed by switching to `TRUNCATE` before each load, making the ETL fully idempotent.
+
+**Bug: PostgreSQL parameter limit**
+Initial ETL used 100,000-row chunks. With 11 columns, that's 1.1M parameters per INSERT — exceeding PostgreSQL's hard limit of 65,535. Reduced chunk size to 5,000 rows (55,000 parameters) to stay safely under the limit.
+
+**Cloud deployment: storage constraint**
+Supabase free tier (500MB) cannot hold the full 6.9M-row `dim_customers` or 2.5M-row `fact_fraud_signals` views. Solution: pre-aggregate all dashboard queries into 9 `deploy_*` tables totaling ~500 rows. The dashboard queries these tiny summary tables on Neon (cloud PostgreSQL), while the full materialized views stay local for development.
+
+**Cloud deployment: Python 3.14 compatibility**
+Streamlit Cloud defaulted to Python 3.14, which has no compiled wheels for `psycopg2-binary`. Switched to `pg8000`, a pure-Python PostgreSQL driver that works on any Python version without compilation.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Data | PaySim (synthetic, 6.3M rows) |
+| Database (local) | PostgreSQL 16 |
+| Database (cloud) | Neon (serverless PostgreSQL) |
+| ETL | Python, pandas, SQLAlchemy |
+| Transformations | SQL (materialized views, window functions) |
+| Dashboard | Streamlit, Plotly |
+| Deployment | Streamlit Community Cloud |
+
+---
+
+## Running Locally
+
+```bash
+# 1. Clone and install
+git clone https://github.com/glcapitan/fintech-analytics.git
+cd fintech-analytics
+pip install -r requirements.txt
+
+# 2. Configure credentials
+# Create a .env file with your PostgreSQL connection details:
+# DB_HOST=localhost
+# DB_PORT=5432
+# DB_NAME=fintech_analytics
+# DB_USER=postgres
+# DB_PASSWORD=your_password
+
+# 3. Load data (requires paysim.csv in data/)
+python src/etl/load_raw_data.py
+
+# 4. Build materialized views
+python run_transformations.py
+
+# 5. Run dashboard
+cd src/dashboard
+streamlit run Home.py
+```
+
+---
+
+## Project Structure
+
+```
 fintech-analytics/
-├── data/
-│   └── paysim.csv                        # raw dataset (not in repo, ~493 MB)
-├── sql/
-│   └── transformations/
-│       ├── 01_dim_customers.sql          # customer dimension (NTILE tiers)
-│       ├── 02_fact_daily_metrics.sql     # daily aggregates + window functions
-│       ├── 03_fact_customer_cohorts.sql  # cohort retention pipeline
-│       └── 04_fact_fraud_signals.sql     # rule-based fraud scoring
 ├── src/
-│   ├── dashboard/
-│   │   ├── Home.py                       # landing page
-│   │   ├── db.py                         # cached DB connection
-│   │   ├── theme.py                      # Plotly chart styling
-│   │   ├── ui.py                         # custom CSS, insight boxes, footer
-│   │   ├── pages/
-│   │   │   ├── 1_Executive_Overview.py
-│   │   │   ├── 2_Transaction_Trends.py
-│   │   │   ├── 3_Customer_Analysis.py
-│   │   │   └── 4_Fraud_Analytics.py
-│   │   └── .streamlit/
-│   │       └── config.toml               # navy/slate theme config
-│   └── etl/
-│       └── load_raw_data.py              # CSV → Postgres pipeline
-├── requirements.txt
-├── .gitignore
-└── README.md
----
-
-## ⚙️ Setup
-
-### Prerequisites
-- Python 3.10+
-- PostgreSQL 15+
-- ~1 GB free disk for the dataset
-
-### Steps
-
-1. **Clone the repo**
-```bash
-   git clone https://github.com/glcapitan/fintech-analytics.git
-   cd fintech-analytics
+│   ├── etl/
+│   │   └── load_raw_data.py       # ETL pipeline
+│   └── dashboard/
+│       ├── Home.py                # Landing page
+│       ├── db.py                  # Database connection helper
+│       ├── theme.py               # Plotly theme
+│       ├── ui.py                  # Reusable UI components
+│       └── pages/
+│           ├── 1_Executive_Overview.py
+│           ├── 2_Transaction_Trends.py
+│           ├── 3_Customer_Analysis.py
+│           └── 4_Fraud_Analytics.py
+├── sql/
+│   └── transformations/           # 4 materialized view definitions
+├── cloud_data/                    # Pre-aggregated CSVs for cloud deploy
+├── export_for_cloud.py            # Generates deploy_ tables locally
+├── load_to_neon.py                # Uploads deploy_ tables to Neon
+├── run_transformations.py         # Rebuilds all materialized views
+├── diagnose.py                    # Row count sanity checks
+└── requirements.txt
 ```
-
-2. **Set up Python environment**
-```bash
-   python -m venv venv
-   venv\Scripts\activate          # Windows
-   # source venv/bin/activate     # macOS/Linux
-   pip install -r requirements.txt
-```
-
-3. **Set up PostgreSQL**
-```bash
-   psql -U postgres
-   CREATE DATABASE fintech_analytics;
-   \q
-```
-
-4. **Configure credentials**
-   Create a `.env` file in the project root:
-   DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=fintech_analytics
-DB_USER=postgres
-DB_PASSWORD=your_password
-5. **Download the dataset**
-   Get [PaySim from Kaggle](https://www.kaggle.com/datasets/ealaxi/paysim1) and place the CSV at `data/paysim.csv`.
-
-6. **Run the ETL**
-```bash
-   python src/etl/load_raw_data.py
-```
-   Loads ~6.36M rows in ~8 minutes (chunked, with progress logging).
-
-7. **Build the analytics layer**
-```bash
-   psql -U postgres -d fintech_analytics -f sql/transformations/01_dim_customers.sql
-   psql -U postgres -d fintech_analytics -f sql/transformations/02_fact_daily_metrics.sql
-   psql -U postgres -d fintech_analytics -f sql/transformations/03_fact_customer_cohorts.sql
-   psql -U postgres -d fintech_analytics -f sql/transformations/04_fact_fraud_signals.sql
-```
-
-8. **Run the dashboard**
-```bash
-   cd src/dashboard
-   streamlit run Home.py
-```
-   Open [http://localhost:8501](http://localhost:8501).
-
----
-
-## 📈 Performance Notes
-
-- **Home page KPIs** originally queried raw transactions with `COUNT DISTINCT` (~60s). Repointed to pre-aggregated views — now **<1s**.
-- **All dashboard pages** read from materialized views (152 rows for daily metrics, ~7M for customers but with unique indexes). No page query scans raw transactions directly.
-- **Streamlit caching** (`@st.cache_data(ttl=600)`) prevents re-querying when users navigate between pages.
-
----
-
-## 🚧 What I Would Add With More Time
-
-- **dbt** to replace the raw `.sql` files — gives lineage tracking, tests, and documentation
-- **Apache Airflow** to schedule ETL refreshes
-- **Global filters** in the sidebar (date range, transaction type) that apply across all pages
-- **Real cloud deployment** — migrate Postgres to Supabase/Neon and host the Streamlit app on Streamlit Community Cloud
-- **A weighted/Bayesian fraud scoring approach** to fix the additive scoring dilution (per the Fraud Analytics page recommendation)
-
----
-
-## 📬 Contact
-
-Built by **Erwin Glenn Capitan** as a portfolio project demonstrating end-to-end BI analytics: data engineering, SQL transformation, dashboard development, and analytical narrative.
-
-- GitHub: [@glcapitan](https://github.com/glcapitan)
-- LinkedIn: *[https://www.linkedin.com/in/erwin-glenn-capitan-ii/]*
-
----
-
-*Data source: [PaySim synthetic mobile money dataset](https://www.kaggle.com/datasets/ealaxi/paysim1) by Edgar Lopez-Rojas et al. (2016). The dataset is synthetic but modeled on real anonymized transaction patterns.*
