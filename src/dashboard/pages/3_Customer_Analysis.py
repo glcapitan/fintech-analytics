@@ -28,61 +28,45 @@ st.markdown(
 )
 st.divider()
 
-# Tier summary
-tier_summary = run_query("""
-    SELECT customer_tier, COUNT(*) AS customer_count,
-           ROUND(AVG(total_amount), 2) AS avg_total_amount,
-           ROUND(AVG(total_txns), 2)   AS avg_txns,
-           SUM(ever_involved_in_fraud) AS fraud_customers
-    FROM dim_customers
-    GROUP BY customer_tier
-    ORDER BY customer_tier;
-""")
+# Load pre-aggregated deploy tables
+tier_data = run_query("SELECT * FROM deploy_tier_summary ORDER BY customer_tier;")
+behavior  = run_query("SELECT * FROM deploy_customer_behavior;")
+top20     = run_query("SELECT * FROM deploy_customer_top20;")
+
+# Derive tier_summary and tier_volume from the single deploy table
+tier_summary = tier_data.copy()
 tier_summary["fraud_rate_pct"] = (
     100.0 * tier_summary["fraud_customers"] / tier_summary["customer_count"]
 ).round(4)
 tier_summary["tier_label"] = "Tier " + tier_summary["customer_tier"].astype(str)
 
-# Volume concentration data
-tier_volume = run_query("""
-    SELECT customer_tier,
-           ROUND(SUM(total_amount), 2) AS total_volume_tier
-    FROM dim_customers
-    GROUP BY customer_tier
-    ORDER BY customer_tier;
-""")
+tier_volume = tier_data[["customer_tier", "total_volume_tier"]].copy()
 tier_volume["tier_label"] = "Tier " + tier_volume["customer_tier"].astype(str)
 tier_volume["pct_of_total"] = (
     100.0 * tier_volume["total_volume_tier"] / tier_volume["total_volume_tier"].sum()
 ).round(1)
 tier_volume["display_text"] = tier_volume["pct_of_total"].apply(lambda v: f"{v}%")
 
-tier1_pct = tier_volume.loc[tier_volume["customer_tier"] == 1, "pct_of_total"].iloc[0]
-total_customers = int(tier_summary["customer_count"].sum())
-total_fraud_customers = int(tier_summary["fraud_customers"].sum())
+tier1_pct        = tier_volume.loc[tier_volume["customer_tier"] == 1, "pct_of_total"].iloc[0]
+total_customers  = int(tier_summary["customer_count"].sum())
+total_fraud_cust = int(tier_summary["fraud_customers"].sum())
 
-# Hero KPI
 render_hero_kpi(
     label="Volume Concentration — Tier 1",
     value=f"{tier1_pct}%",
     context=(
         f"Top 25% of {total_customers:,} customers control {tier1_pct}% of total volume. "
-        f"Classic long-tail distribution typical of payment networks."
+        "Classic long-tail distribution typical of payment networks."
     ),
 )
 
-# Supporting KPIs
 c1, c2, c3 = st.columns(3)
 c1.metric("Total Customers", f"{total_customers:,}")
-c2.metric("Fraud-Exposed Customers", f"{total_fraud_customers:,}")
-c3.metric(
-    "Fraud Exposure Rate",
-    f"{100.0 * total_fraud_customers / total_customers:.3f}%",
-)
+c2.metric("Fraud-Exposed Customers", f"{total_fraud_cust:,}")
+c3.metric("Fraud Exposure Rate", f"{100.0 * total_fraud_cust / total_customers:.3f}%")
 
 st.divider()
 
-# Insight box
 render_insight_box(
     insight=(
         f"Customer transaction volume follows an extreme long-tail. "
@@ -101,7 +85,6 @@ render_insight_box(
     ),
 )
 
-# Charts row 1: volume concentration + avg volume per tier
 left, right = st.columns(2)
 
 with left:
@@ -139,7 +122,6 @@ with right:
 
 st.divider()
 
-# Sender vs receive-only
 st.subheader("Customer Behavior: Senders vs Receive-Only")
 st.markdown(
     "<div style='color: #64748b; font-size: 0.95rem;'>"
@@ -149,16 +131,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-behavior = run_query("""
-    SELECT CASE WHEN txns_sent > 0 THEN 'Active Sender'
-                ELSE 'Receive-Only' END AS behavior_type,
-           COUNT(*) AS customer_count
-    FROM dim_customers
-    GROUP BY CASE WHEN txns_sent > 0 THEN 'Active Sender'
-                  ELSE 'Receive-Only' END;
-""")
-
 left2, right2 = st.columns([1, 1])
+
 with left2:
     fig3 = px.pie(behavior, names="behavior_type", values="customer_count", hole=0.55)
     fig3.update_traces(textposition="inside", textinfo="percent+label",
@@ -176,7 +150,6 @@ with right2:
 
 st.divider()
 
-# Top customers — styled rank list (mockup inspiration)
 st.subheader("Top 10 Customers by Total Volume")
 st.markdown(
     "<div style='color: #64748b; font-size: 0.95rem; margin-bottom: 1rem;'>"
@@ -186,14 +159,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-top10 = run_query("""
-    SELECT customer_id, total_txns, total_amount, customer_tier
-    FROM dim_customers
-    ORDER BY total_amount DESC
-    LIMIT 10;
-""")
-
-# Convert to ranked items for the rank list component
+top10 = top20.head(10).reset_index(drop=True)
 ranked_items = []
 for idx, row in top10.iterrows():
     ranked_items.append({
@@ -202,20 +168,12 @@ for idx, row in top10.iterrows():
         "meta": f"Tier {int(row['customer_tier'])} · {int(row['total_txns'])} transactions",
         "value": f"${row['total_amount'] / 1e6:.1f}M",
     })
-
 render_rank_list(ranked_items)
 
 st.divider()
 
 with st.expander("View full top 20 (table view)"):
-    full_top = run_query("""
-        SELECT customer_id, total_txns, amount_sent, amount_received, total_amount,
-               customer_tier, ever_involved_in_fraud
-        FROM dim_customers
-        ORDER BY total_amount DESC
-        LIMIT 20;
-    """)
-    st.dataframe(full_top, use_container_width=True)
+    st.dataframe(top20, use_container_width=True)
 
 with st.expander("View tier summary"):
     st.dataframe(tier_summary, use_container_width=True)

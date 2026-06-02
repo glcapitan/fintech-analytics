@@ -27,13 +27,12 @@ st.markdown(
 )
 st.divider()
 
-# Data
 type_summary = run_query("""
     SELECT type,
            SUM(txn_count)    AS txn_count,
            SUM(total_amount) AS total_amount,
            SUM(fraud_count)  AS fraud_count
-    FROM fact_daily_metrics
+    FROM deploy_fact_daily_metrics
     GROUP BY type
     ORDER BY txn_count DESC;
 """)
@@ -41,13 +40,11 @@ type_summary["fraud_rate_pct"] = (
     100.0 * type_summary["fraud_count"] / type_summary["txn_count"]
 ).round(4)
 
-# Computed values
-total_txns = int(type_summary["txn_count"].sum())
+total_txns   = int(type_summary["txn_count"].sum())
 total_volume = float(type_summary["total_amount"].sum())
-total_fraud = int(type_summary["fraud_count"].sum())
+total_fraud  = int(type_summary["fraud_count"].sum())
 overall_fraud_rate = 100.0 * total_fraud / total_txns
 
-# Hero KPI: total volume (the headline executive number)
 render_hero_kpi(
     label="Total Volume Processed",
     value=f"${total_volume / 1e9:,.1f}B",
@@ -57,7 +54,6 @@ render_hero_kpi(
     ),
 )
 
-# Supporting KPIs
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total Transactions", f"{total_txns:,}")
 c2.metric("Total Volume", f"${total_volume / 1e9:,.1f}B")
@@ -66,7 +62,6 @@ c4.metric("Overall Fraud Rate", f"{overall_fraud_rate:.3f}%")
 
 st.divider()
 
-# Insight box
 render_insight_box(
     insight=(
         "Fraud is concentrated entirely in <b>TRANSFER (0.77%)</b> and "
@@ -86,15 +81,13 @@ render_insight_box(
     ),
 )
 
-# Charts row 1
 left, right = st.columns(2)
 
 with left:
     st.subheader("Transaction Count by Type")
     fig_donut = px.pie(type_summary, names="type", values="txn_count", hole=0.55)
     fig_donut.update_traces(
-        textposition="inside",
-        textinfo="percent+label",
+        textposition="inside", textinfo="percent+label",
         textfont=dict(color="white", size=12),
     )
     st.plotly_chart(style_fig(fig_donut), use_container_width=True)
@@ -105,8 +98,7 @@ with right:
         lambda v: f"${v / 1e9:.1f}B" if v >= 1e9 else f"${v / 1e6:.0f}M"
     )
     fig_vol = px.bar(
-        type_summary, x="type", y="total_amount",
-        text="volume_text",
+        type_summary, x="type", y="total_amount", text="volume_text",
         labels={"total_amount": "Total Volume ($)", "type": "Transaction Type"},
     )
     fig_vol.update_traces(marker_color=COLORS["primary"], textposition="outside")
@@ -114,7 +106,6 @@ with right:
 
 st.divider()
 
-# Fraud rate
 st.subheader("Fraud Rate by Transaction Type")
 st.markdown(
     "<div style='color: #64748b; font-size: 0.95rem;'>"

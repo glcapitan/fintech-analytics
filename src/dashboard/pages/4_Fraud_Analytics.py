@@ -29,18 +29,13 @@ st.markdown(
 )
 st.divider()
 
-# Pull data for hero KPI and the rest of the page
-overall = run_query("""
-    SELECT COUNT(*) AS flagged_txns,
-           SUM(is_fraud) AS true_fraud,
-           COUNT(*) FILTER (WHERE risk_score = 1) AS score1_count,
-           SUM(is_fraud) FILTER (WHERE risk_score = 1) AS score1_fraud
-    FROM fact_fraud_signals;
-""").iloc[0]
+# Load pre-aggregated deploy tables
+overall   = run_query("SELECT * FROM deploy_fraud_overall;").iloc[0]
+risk_dist = run_query("SELECT * FROM deploy_fraud_risk_dist ORDER BY risk_score;")
+type_fraud = run_query("SELECT * FROM deploy_fraud_type_summary ORDER BY flagged_txns DESC;")
 
 score1_precision = 100.0 * float(overall["score1_fraud"]) / float(overall["score1_count"])
 
-# Hero KPI — the headline finding for the whole project
 render_hero_kpi(
     label="Risk Score 1 Precision",
     value=f"{score1_precision:.1f}%",
@@ -51,7 +46,6 @@ render_hero_kpi(
     ),
 )
 
-# Supporting KPIs
 c1, c2, c3 = st.columns(3)
 c1.metric("Flagged Transactions", f"{int(overall['flagged_txns']):,}")
 c2.metric("Confirmed Fraud (in flagged)", f"{int(overall['true_fraud']):,}")
@@ -59,7 +53,6 @@ c3.metric("Risk Score 1 Transactions", f"{int(overall['score1_count']):,}")
 
 st.divider()
 
-# Insight box
 render_insight_box(
     insight=(
         f"<b>Risk Score 1 detects fraud with ~{score1_precision:.0f}% precision</b> "
@@ -80,6 +73,8 @@ render_insight_box(
     ),
 )
 
+risk_dist["risk_label"] = "Score " + risk_dist["risk_score"].astype(str)
+
 st.subheader("Risk Score Precision")
 st.markdown(
     "<div style='color: #64748b; font-size: 0.95rem;'>"
@@ -89,16 +84,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-risk_dist = run_query("""
-    SELECT risk_score, COUNT(*) AS flagged_txns, SUM(is_fraud) AS true_fraud,
-           ROUND(100.0 * SUM(is_fraud) / COUNT(*), 2) AS precision_pct
-    FROM fact_fraud_signals
-    GROUP BY risk_score
-    ORDER BY risk_score;
-""")
-risk_dist["risk_label"] = "Score " + risk_dist["risk_score"].astype(str)
-
-# THREE-column row: gauge + flagged bars + precision bars
 gauge_col, flagged_col, precision_col = st.columns([1, 1, 1])
 
 with gauge_col:
@@ -113,9 +98,9 @@ with gauge_col:
             "bgcolor": "#f1f5f9",
             "borderwidth": 0,
             "steps": [
-                {"range": [0, 50], "color": "#fee2e2"},
+                {"range": [0, 50],  "color": "#fee2e2"},
                 {"range": [50, 80], "color": "#fef3c7"},
-                {"range": [80, 100], "color": "#dcfce7"},
+                {"range": [80, 100],"color": "#dcfce7"},
             ],
             "threshold": {
                 "line": {"color": "#1e3a8a", "width": 3},
@@ -125,8 +110,7 @@ with gauge_col:
         },
     ))
     fig_gauge.update_layout(
-        height=280,
-        margin=dict(l=20, r=20, t=20, b=20),
+        height=280, margin=dict(l=20, r=20, t=20, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, system-ui, sans-serif", color="#475569"),
     )
@@ -153,12 +137,6 @@ with precision_col:
 st.divider()
 
 st.subheader("Flagged Transactions by Type")
-type_fraud = run_query("""
-    SELECT type, COUNT(*) AS flagged_txns, SUM(is_fraud) AS true_fraud
-    FROM fact_fraud_signals
-    GROUP BY type
-    ORDER BY flagged_txns DESC;
-""")
 fig3 = px.bar(
     type_fraud, x="type", y=["flagged_txns", "true_fraud"], barmode="group",
     labels={"value": "Count", "type": "Transaction Type", "variable": "Metric"},
@@ -178,7 +156,7 @@ st.markdown(
 risk_filter = st.selectbox("Minimum risk score:", options=[1, 2, 3], index=0)
 suspicious = run_query(f"""
     SELECT day_number, type, name_orig, name_dest, amount, risk_score, is_fraud
-    FROM fact_fraud_signals
+    FROM deploy_fraud_suspicious
     WHERE risk_score >= {risk_filter}
     ORDER BY amount DESC
     LIMIT 100;
