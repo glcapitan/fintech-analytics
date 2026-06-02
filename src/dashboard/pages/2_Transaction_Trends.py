@@ -28,14 +28,12 @@ st.markdown(
 )
 st.divider()
 
-# Pull aggregate for hero KPI
 overall = run_query("""
     SELECT SUM(txn_count) AS total_txns,
            COUNT(DISTINCT day_number) AS day_count
-    FROM fact_daily_metrics;
+    FROM deploy_fact_daily_metrics;
 """).iloc[0]
 
-# Hero KPI
 render_hero_kpi(
     label="Activity Window",
     value=f"{int(overall['day_count'])} Days",
@@ -45,7 +43,6 @@ render_hero_kpi(
     ),
 )
 
-# Insight box
 render_insight_box(
     insight=(
         "Daily transaction volume shows anomalous drops on <b>days 3–5</b> "
@@ -64,8 +61,7 @@ render_insight_box(
     ),
 )
 
-# Filter
-types_df = run_query("SELECT DISTINCT type FROM fact_daily_metrics ORDER BY type;")
+types_df = run_query("SELECT DISTINCT type FROM deploy_fact_daily_metrics ORDER BY type;")
 type_options = types_df["type"].tolist()
 selected_type = st.selectbox(
     "Select transaction type:",
@@ -76,12 +72,11 @@ selected_type = st.selectbox(
 trend_data = run_query(f"""
     SELECT day_number, txn_count, total_amount, rolling_7d_avg,
            dod_pct_change, cumulative_txn_count
-    FROM fact_daily_metrics
+    FROM deploy_fact_daily_metrics
     WHERE type = '{selected_type}'
     ORDER BY day_number;
 """)
 
-# Combo chart
 st.subheader(f"Daily Transaction Count — {selected_type}")
 st.markdown(
     "<div style='color: #64748b; font-size: 0.95rem;'>"
@@ -121,7 +116,6 @@ st.plotly_chart(style_fig(fig1, height=420), use_container_width=True)
 
 st.divider()
 
-# Charts row 2
 left, right = st.columns(2)
 
 with left:
@@ -151,10 +145,9 @@ with right:
 
 st.divider()
 
-# Summary metrics
 total_for_type = int(trend_data["txn_count"].sum())
-peak_day = int(trend_data.loc[trend_data["txn_count"].idxmax(), "day_number"])
-peak_count = int(trend_data["txn_count"].max())
+peak_day       = int(trend_data.loc[trend_data["txn_count"].idxmax(), "day_number"])
+peak_count     = int(trend_data["txn_count"].max())
 
 m1, m2, m3 = st.columns(3)
 m1.metric(f"Total {selected_type} Transactions", f"{total_for_type:,}")
