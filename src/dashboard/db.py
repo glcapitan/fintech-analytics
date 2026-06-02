@@ -21,25 +21,26 @@ def _get_credential(key: str, default: str = "") -> str:
     This lets the same code work both locally and on Streamlit Cloud.
     """
     try:
-        # Streamlit Cloud and local .streamlit/secrets.toml
         return st.secrets[key]
     except (KeyError, FileNotFoundError, AttributeError):
-        # Local .env
         return os.getenv(key, default)
 
 
 @st.cache_resource
 def get_engine():
     """Build and cache a SQLAlchemy engine for the project's database."""
-    db_host = _get_credential("DB_HOST", "localhost")
-    db_port = _get_credential("DB_PORT", "5432")
-    db_name = _get_credential("DB_NAME", "fintech_analytics")
-    db_user = _get_credential("DB_USER", "postgres")
+    db_host     = _get_credential("DB_HOST", "localhost")
+    db_port     = _get_credential("DB_PORT", "5432")
+    db_name     = _get_credential("DB_NAME", "fintech_analytics")
+    db_user     = _get_credential("DB_USER", "postgres")
     db_password = _get_credential("DB_PASSWORD", "")
+    db_sslmode  = _get_credential("DB_SSLMODE", "")
+
+    ssl_suffix = f"?sslmode={db_sslmode}" if db_sslmode else ""
 
     url = (
         f"postgresql+psycopg2://{db_user}:{db_password}"
-        f"@{db_host}:{db_port}/{db_name}"
+        f"@{db_host}:{db_port}/{db_name}{ssl_suffix}"
     )
     return create_engine(url, pool_pre_ping=True)
 
