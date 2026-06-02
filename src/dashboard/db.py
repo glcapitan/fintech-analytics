@@ -39,10 +39,11 @@ def get_engine():
     ssl_suffix = f"?sslmode={db_sslmode}" if db_sslmode else ""
 
     url = (
-        f"postgresql+psycopg2://{db_user}:{db_password}"
-        f"@{db_host}:{db_port}/{db_name}{ssl_suffix}"
+        f"postgresql+pg8000://{db_user}:{db_password}"
+        f"@{db_host}:{db_port}/{db_name}"
     )
-    return create_engine(url, pool_pre_ping=True)
+    ssl_args = {"ssl_context": True} if db_sslmode == "require" else {}
+    return create_engine(url, connect_args=ssl_args, pool_pre_ping=True)
 
 
 @st.cache_data(ttl=600)
