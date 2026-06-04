@@ -57,37 +57,7 @@ The balance-mismatch signal is the problem. It triggers on nearly every TRANSFER
 
 The pipeline uses a **deliberate dual-database design**: the full materialized views (9.4M rows) live in local PostgreSQL for development, while the dashboard queries pre-aggregated summary tables (~500 rows) on Neon. This was a conscious cost/performance decision — serving 9.4M rows from a free-tier cloud database would be slow and exceed storage limits, so all dashboard queries are pre-computed into compact `deploy_*` tables. The live app and the local pipeline run identical logic; only the query target differs.
 
-```
-paysim.csv (6.3M rows)
-    │
-    ▼
-src/etl/load_raw_data.py          # EXTRACT + LOAD
-    │  TRUNCATE before load (idempotent — prevents double-loads)
-    │  Chunked inserts (5,000 rows) — avoids PostgreSQL 65,535 param limit
-    ▼
-raw_transactions (PostgreSQL)
-    │
-    ▼
-sql/transformations/              # TRANSFORM
-    ├── 01_dim_customers.sql      # 6.9M customer dimension (NTILE tiers)
-    ├── 02_fact_daily_metrics.sql # 152-row daily aggregates + window functions
-    ├── 03_fact_customer_cohorts.sql
-    └── 04_fact_fraud_signals.sql # Rule-based risk scoring (signals 1–3)
-    │
-    ▼
-export_for_cloud.py               # Pre-aggregate for cloud deployment
-    │  9 deploy_ tables (~500 rows total)
-    ▼
-Neon PostgreSQL (cloud)           # Free-tier compatible (< 1MB)
-    │
-    ▼
-src/dashboard/                    # Streamlit multi-page app
-    ├── Home.py
-    ├── pages/1_Executive_Overview.py
-    ├── pages/2_Transaction_Trends.py
-    ├── pages/3_Customer_Analysis.py
-    └── pages/4_Fraud_Analytics.py
-```
+![Architecture](docs/architecture.png)
 
 ---
 
